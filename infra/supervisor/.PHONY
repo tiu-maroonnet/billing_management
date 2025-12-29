@@ -1,0 +1,41 @@
+.PHONY: setup start stop restart logs clean
+
+setup:
+	@echo "Setting up BCMS Development Environment..."
+	docker-compose up -d mysql redis
+	docker-compose exec backend composer install
+	docker-compose exec backend php artisan migrate --seed
+	docker-compose up -d backend frontend
+	@echo "Setup complete! Access at http://localhost:3000"
+
+start:
+	docker-compose up -d
+
+stop:
+	docker-compose down
+
+restart:
+	docker-compose restart
+
+logs:
+	docker-compose logs -f
+
+backend-logs:
+	docker-compose logs -f backend
+
+frontend-logs:
+	docker-compose logs -f frontend
+
+clean:
+	docker-compose down -v
+	rm -rf backend/vendor frontend/node_modules frontend/.next
+	@echo "Cleanup complete!"
+
+test:
+	docker-compose exec backend php artisan test
+
+queue:
+	docker-compose exec backend php artisan queue:work
+
+schedule:
+	docker-compose exec backend php artisan schedule:work

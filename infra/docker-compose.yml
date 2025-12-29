@@ -1,0 +1,85 @@
+### 1.4 `docker-compose.yml` (Optional untuk Development) ###
+```yaml
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: bcms_mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: bcms_db
+      MYSQL_USER: bcms_user
+      MYSQL_PASSWORD: bcms_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./infra/mysql/my.cnf:/etc/mysql/conf.d/my.cnf
+    networks:
+      - bcms_network
+
+  redis:
+    image: redis:7-alpine
+    container_name: bcms_redis
+    ports:
+      - "6379:6379"
+    networks:
+      - bcms_network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: bcms_backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/var/www/html
+    environment:
+      DB_HOST: mysql
+      DB_DATABASE: bcms_db
+      DB_USERNAME: bcms_user
+      DB_PASSWORD: bcms_password
+      REDIS_HOST: redis
+    depends_on:
+      - mysql
+      - redis
+    networks:
+      - bcms_network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: bcms_frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000/api
+    depends_on:
+      - backend
+    networks:
+      - bcms_network
+
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin
+    container_name: bcms_phpmyadmin
+    ports:
+      - "8080:80"
+    environment:
+      PMA_HOST: mysql
+    networks:
+      - bcms_network
+
+networks:
+  bcms_network:
+    driver: bridge
+
+volumes:
+  mysql_data:
+  redis_data:
