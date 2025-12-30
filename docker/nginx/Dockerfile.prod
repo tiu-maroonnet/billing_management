@@ -1,0 +1,41 @@
+FROM nginx:alpine
+
+# Install dependencies
+RUN apk add --no-cache \
+    curl \
+    certbot \
+    certbot-nginx \
+    bash \
+    openssl \
+    && rm -rf /var/cache/apk/*
+
+# Create SSL directory
+RUN mkdir -p /etc/nginx/ssl \
+    && chmod 700 /etc/nginx/ssl
+
+# Copy configuration
+COPY docker/nginx/nginx.prod.conf /etc/nginx/nginx.conf
+COPY docker/nginx/security-headers.conf /etc/nginx/security-headers.conf
+COPY docker/nginx/rate-limiting.conf /etc/nginx/rate-limiting.conf
+COPY docker/nginx/robots.txt /usr/share/nginx/html/robots.txt
+
+# Copy scripts
+COPY docker/nginx/scripts/entrypoint.sh /docker-entrypoint.d/entrypoint.sh
+COPY docker/nginx/scripts/renew-certs.sh /etc/periodic/daily/renew-certs
+
+# Set permissions
+RUN chmod +x /docker-entrypoint.d/entrypoint.sh \
+    && chmod +x /etc/periodic/daily/renew-certs
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost/health || exit 1
+
+# Expose ports
+EXPOSE 80 443
+
+# Entrypoint
+ENTRYPOINT ["/docker-entrypoint.d/entrypoint.sh"]
+
+# Start nginx
+CMD ["nginx", "-g", "daemon off;"]
