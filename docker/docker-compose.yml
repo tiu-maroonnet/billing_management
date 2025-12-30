@@ -1,0 +1,231 @@
+# docker-compose.yml
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:18-alpine
+    container_name: maroonnet_postgres
+    environment:
+      POSTGRES_DB: maroon_net_bcms
+      POSTGRES_USER: maroon_admin
+      POSTGRES_PASSWORD: SecurePostgresPass123!
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-scripts/init-postgres.sh:/docker-entrypoint-initdb.d/init-postgres.sh
+    ports:
+      - "5432:5432"
+    networks:
+      - maroonnet_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U maroon_admin"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Redis Cache & Queue
+  redis:
+    image: redis:8-alpine
+    container_name: maroonnet_redis
+    command: redis-server --requirepass SecureRedisPass123! --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - maroonnet_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # PHP Laravel Backend
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: maroonnet_backend
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      APP_ENV: production
+      APP_DEBUG: false
+      APP_URL: https://billing.maroon-net.id
+      DB_CONNECTION: pgsql
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: maroon_net_bcms
+      DB_USERNAME: maroon_admin
+      DB_PASSWORD: SecurePostgresPass123!
+      REDIS_HOST: redis
+      REDIS_PASSWORD: SecureRedisPass123!
+      REDIS_PORT: 6379
+      QUEUE_CONNECTION: redis
+      SESSION_DRIVER: redis
+      CACHE_DRIVER: redis
+    volumes:
+      - ./backend:/var/www/html
+      - backend_storage:/var/www/html/storage
+      - backend_logs:/var/www/html/storage/logs
+    networks:
+      - maroonnet_network
+    restart: unless-stopped
+
+  # Laravel Queue Worker
+  queue:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: maroonnet_queue
+    depends_on:
+      - postgres
+      - redis
+    command: php artisan queue:work --tries=3
+    environment:
+      APP_ENV: production
+      DB_CONNECTION: pgsql
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: maroon_net_bcms
+      DB_USERNAME: maroon_admin
+      DB_PASSWORD: SecurePostgresPass123!
+      REDIS_HOST: redis
+      REDIS_PASSWORD: SecureRedisPass123!
+      REDIS_PORT: 6379
+      QUEUE_CONNECTION: redis
+    volumes:
+      - ./backend:/var/www/html
+      - backend_storage:/var/www/html/storage
+    networks:
+      - maroonnet_network
+    restart: unless-stopped
+
+  # Laravel Scheduler
+  scheduler:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: maroonnet_scheduler
+    depends_on:
+      - postgres
+      - redis
+    command: >
+      sh -c "
+      echo 'Starting scheduler...' &&
+      while [ true ]; do
+        php artisan schedule:run --verbose --no-interaction &
+        sleep 60
+      done"
+    environment:
+      APP_ENV: production
+      DB_CONNECTION: pgsql
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: maroon_net_bcms
+      DB_USERNAME: maroon_admin
+      DB_PASSWORD: SecurePostgresPass123!
+      REDIS_HOST: redis
+      REDIS_PASSWORD: SecureRedisPass123!
+      REDIS_PORT: 6379
+    volumes:
+      - ./backend:/var/www/html
+      - backend_storage:/var/www/html/storage
+    networks:
+      - maroonnet_network
+    restart: unless-stopped
+
+  # React/Next.js Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: maroonnet_frontend
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: https://api.maroon-net.id
+    ports:
+      - "3000:3000"
+    networks:
+      - maroonnet_network
+    restart: unless-stopped
+
+  # Nginx Reverse Proxy
+  nginx:
+    build:
+      context: ./docker/nginx
+      dockerfile: Dockerfile
+    container_name: maroonnet_nginx
+    depends_on:
+      - backend
+      - frontend
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./docker/nginx/ssl:/etc/nginx/ssl
+      - ./docker/nginx/logs:/var/log/nginx
+      - ./frontend/dist:/usr/share/nginx/html/frontend
+      - ./backend/public:/usr/share/nginx/html/backend
+    networks:
+      - maroonnet_network
+    restart: unless-stopped
+
+  # ELK Stack for Logging (Optional)
+  # elasticsearch:
+  #   image: elasticsearch:8.12.0
+  #   container_name: maroonnet_elasticsearch
+  #   environment:
+  #     - discovery.type=single-node
+  #     - xpack.security.enabled=false
+  #   volumes:
+  #     - elasticsearch_data:/usr/share/elasticsearch/data
+  #   ports:
+  #     - "9200:9200"
+  #   networks:
+  #     - maroonnet_network
+
+  # logstash:
+  #   image: logstash:8.12.0
+  #   container_name: maroonnet_logstash
+  #   volumes:
+  #     - ./docker/logstash/logstash.conf:/usr/share/logstash/pipeline/logstash.conf
+  #   ports:
+  #     - "5000:5000"
+  #   networks:
+  #     - maroonnet_network
+  #   depends_on:
+  #     - elasticsearch
+
+  # kibana:
+  #   image: kibana:8.12.0
+  #   container_name: maroonnet_kibana
+  #   environment:
+  #     - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+  #   ports:
+  #     - "5601:5601"
+  #   networks:
+  #     - maroonnet_network
+  #   depends_on:
+  #     - elasticsearch
+
+networks:
+  maroonnet_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  backend_storage:
+    driver: local
+  backend_logs:
+    driver: local
+  elasticsearch_data:
+    driver: local
